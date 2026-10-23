@@ -1,0 +1,6 @@
+.work/
+.local/
+reports/
+__pycache__/
+*.pyc
+.venv/

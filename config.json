@@ -1,0 +1,11 @@
+{
+  "repository": "betaflight/betaflight",
+  "issue_pages_per_order": 2,
+  "discussion_pages": 2,
+  "enrich_limit": 15,
+  "topics": {
+    "logging": ["blackbox", "logging", "sdcard", "sdio", "flash storage"],
+    "interoperability": ["msp", "telemetry", "mavlink", "displayport", "serial"],
+    "diagnostics": ["diagnostic", "error message", "configuration", "unit test", "documentation"]
+  }
+}

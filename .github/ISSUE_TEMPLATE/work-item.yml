@@ -1,0 +1,41 @@
+name: Improvement proposal
+description: A sourced bug, feature, or architecture proposal
+title: "[Proposal] "
+labels: ["stage:triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and expected behavior
+      description: Describe the general problem and who benefits.
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: Sources and existing work
+      description: Link the original report, current code, and related pull requests. State what was checked.
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Small bug fix
+        - Small feature
+        - Architecture or compatibility design
+        - Existing upstream work to follow
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Acceptance criteria and validation
+      description: Include reproduction, baseline, tests, and any separate hardware validation.
+    validations:
+      required: true
+  - type: textarea
+    id: limits
+    attributes:
+      label: Dependencies and remaining uncertainty
