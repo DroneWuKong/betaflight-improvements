@@ -1,0 +1,31 @@
+diff --git a/src/main/drivers/sdcard_sdio_baremetal.c b/src/main/drivers/sdcard_sdio_baremetal.c
+index 0136584..ae2eb1b 100644
+--- a/src/main/drivers/sdcard_sdio_baremetal.c
++++ b/src/main/drivers/sdcard_sdio_baremetal.c
+@@ -379,7 +379,7 @@ static bool sdcardSdio_poll(void)
+                     sdcard.profiler(SDCARD_BLOCK_OPERATION_WRITE, sdcard.pendingOperation.blockIndex, micros() - sdcard.pendingOperation.profileStartTime);
+                 }
+ #endif
+-            } else if (millis() > sdcard.operationStartTime + SDCARD_TIMEOUT_WRITE_MSEC) {
++            } else if (millis() - sdcard.operationStartTime > SDCARD_TIMEOUT_WRITE_MSEC) {
+                 /*
+                  * The caller has already been told that their write has completed, so they will have discarded
+                  * their buffer and have no hope of retrying the operation. But this should be very rare and it allows
+@@ -412,7 +412,7 @@ static bool sdcardSdio_poll(void)
+                     }
+                 break;
+                 case SDCARD_RECEIVE_BLOCK_IN_PROGRESS:
+-                    if (millis() <= sdcard.operationStartTime + SDCARD_TIMEOUT_READ_MSEC) {
++                    if (millis() - sdcard.operationStartTime <= SDCARD_TIMEOUT_READ_MSEC) {
+                         break; // Timeout not reached yet so keep waiting
+                     }
+                     // Timeout has expired, so fall through to convert to a fatal error
+@@ -431,7 +431,7 @@ static bool sdcardSdio_poll(void)
+                     sdcard.profiler(SDCARD_BLOCK_OPERATION_WRITE, sdcard.pendingOperation.blockIndex, micros() - sdcard.pendingOperation.profileStartTime);
+                 }
+ #endif
+-            } else if (millis() > sdcard.operationStartTime + SDCARD_TIMEOUT_WRITE_MSEC) {
++            } else if (millis() - sdcard.operationStartTime > SDCARD_TIMEOUT_WRITE_MSEC) {
+                 sdcard_reset();
+                 goto doMore;
+             }

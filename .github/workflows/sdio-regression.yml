@@ -1,0 +1,27 @@
+name: SDIO rollover regression
+on:
+  push:
+    paths: ['experiments/sdio-timeout/**', '.github/workflows/sdio-regression.yml']
+  pull_request:
+    paths: ['experiments/sdio-timeout/**', '.github/workflows/sdio-regression.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: betaflight/betaflight
+          ref: c1a17eca71b6cefe5224eb4c3d3aab587cf1b802
+          path: .work/betaflight
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python experiments/sdio-timeout/verify.py .work/betaflight

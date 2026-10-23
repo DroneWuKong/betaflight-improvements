@@ -1,0 +1,5 @@
+{
+  "repository": "https://github.com/betaflight/betaflight.git",
+  "commit": "c1a17eca71b6cefe5224eb4c3d3aab587cf1b802",
+  "source": "src/main/drivers/sdcard_sdio_baremetal.c"
+}
