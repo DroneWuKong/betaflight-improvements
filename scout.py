@@ -83,11 +83,11 @@ def normalize_issue(raw, repo):
             "_body": raw.get("body") or ""}
 
 
-def collect_discussions(client, repo, limit):
+def collect_discussions(client, repo, limit, direction="ASC"):
     owner, name = repo.split("/")
-    query = """query($owner:String!,$name:String!,$after:String) {
+    query = """query($owner:String!,$name:String!,$after:String,$direction:OrderDirection!) {
       repository(owner:$owner,name:$name) {
-        discussions(first:100,after:$after,orderBy:{field:CREATED_AT,direction:ASC}) {
+        discussions(first:100,after:$after,orderBy:{field:CREATED_AT,direction:$direction}) {
           pageInfo { hasNextPage endCursor }
           nodes { number title body createdAt updatedAt closed answer { id } category { name } }
         }
@@ -96,7 +96,7 @@ def collect_discussions(client, repo, limit):
     cursor, items = None, []
     for _ in range(limit):
         result = client.get("/graphql", {"query": query, "variables": {
-            "owner": owner, "name": name, "after": cursor}})
+            "owner": owner, "name": name, "after": cursor, "direction": direction}})
         data = result["data"]["repository"]["discussions"]
         for raw in data["nodes"]:
             items.append({"id": f"{repo}#discussion-{raw['number']}", "repository": repo,
@@ -115,15 +115,21 @@ def rank(items, topics):
     unique = {}
     for item in items:
         previous = unique.get(item["id"])
-        if previous is None or item["updated_at"] > previous["updated_at"]:
+        if previous is None or item["updated_at"] >= previous["updated_at"]:
             unique[item["id"]] = item
     result = []
     for item in unique.values():
-        text = (item["title"] + " " + item.get("_body", "")).lower()
-        matched = [topic for topic, terms in topics.items() if any(t.lower() in text for t in terms)]
-        item = dict(item, topics=matched, score=3 * len(matched),
+        title = item["title"].lower()
+        # Configuration dumps should not outrank a directly relevant title.
+        body = re.sub(r"```.*?```", "", item.get("_body", ""), flags=re.S).lower()
+        weights = {topic: 4 if any(t.lower() in title for t in terms) else
+                   1 if any(t.lower() in body for t in terms) else 0
+                   for topic, terms in topics.items()}
+        matched = [topic for topic, score in weights.items() if score]
+        item = dict(item, topics=matched, score=sum(weights.values()),
                     triage="needs-triage" if item["state"] == "open" else "inactive",
-                    related_prs=[], checks={"linked_work": "not-checked", "code": "not-checked"})
+                    related_prs=[], potential_prs=[], searches=[],
+                    checks={"linked_work": "not-checked", "pr_search": "not-checked", "code": "not-checked"})
         # Age never disqualifies a request. Scores are relevance hints, not proof of a bug.
         result.append(item)
     return sorted(result, key=lambda x: (-x["score"], x["created_at"], x["id"]))
@@ -160,14 +166,68 @@ def enrich(client, item):
         item["triage"] = "upstream-work-needs-review"
 
 
+def search_related(client, item, terms, cache):
+    """Bounded heuristic search; matches are leads, not confirmed fixes."""
+    repo = item["repository"]
+    matching = [term for term in terms if term in item["title"].lower()]
+    if not matching:
+        item["checks"]["pr_search"] = "no-configured-title-term"
+        return
+    found = {}
+    for term in matching:
+        query = f'repo:{repo} is:pr in:title "{term}"'
+        key = (repo, term)
+        if key not in cache:
+            try:
+                result = client.get("/search/issues?" + urlencode({
+                    "q": query, "sort": "updated", "order": "desc", "per_page": 20}))
+                if not isinstance(result.get("items"), list) or not isinstance(result.get("total_count"), int):
+                    raise RuntimeError("Unexpected PR search response")
+                cache[key] = result
+            except RuntimeError as exc:
+                cache[key] = exc  # Do not retry a failed search once for every candidate.
+        result = cache[key]
+        if isinstance(result, Exception):
+            raise result
+        complete = not result.get("incomplete_results", True) and result["total_count"] <= len(result["items"])
+        item["searches"].append({"query": query, "total_count": result["total_count"],
+                                 "received": len(result["items"]), "complete": complete})
+        for row in result["items"]:
+            number = row.get("number")
+            if type(number) is not int or number <= 0 or "pull_request" not in row:
+                continue
+            url = f"https://github.com/{repo}/pull/{number}"
+            # Refuse search results outside the public repository we verified.
+            if row.get("html_url") != url or row.get("repository_url") != f"https://api.github.com/repos/{repo}":
+                continue
+            if url in {pr["url"] for pr in item["related_prs"]}:
+                continue
+            state = "merged" if row["pull_request"].get("merged_at") else (
+                "open" if row["state"] == "open" else "closed-merge-unchecked")
+            found[url] = {"url": url, "state": state, "title": row["title"]}
+    item["potential_prs"] = list(found.values())
+    item["checks"]["pr_search"] = "checked" if all(s["complete"] for s in item["searches"]) else "partial"
+    if found and item["state"] == "open" and item["triage"] == "needs-triage":
+        item["triage"] = "possible-upstream-work"
+
+
 def discover(client, config):
     repo = config["repository"]
     if not REPO.fullmatch(repo):
         raise ValueError("repository must be owner/name")
+    orders = config.get("discussion_orders", ["ASC"])
+    if not orders or len(set(orders)) != len(orders) or any(x not in ("ASC", "DESC") for x in orders):
+        raise ValueError("discussion_orders must contain ASC and/or DESC without duplicates")
+    terms = config.get("pr_search_terms", [])
+    if len(terms) > 12 or any(not re.fullmatch(r"[a-z0-9][a-z0-9 -]{1,39}", t) for t in terms):
+        raise ValueError("Use at most 12 plain lowercase PR search terms")
+    watch = config.get("watch_issues", [])
+    if len(watch) > 20 or any(type(n) is not int or n <= 0 for n in watch):
+        raise ValueError("watch_issues must contain at most 20 positive issue numbers")
     if client.get(f"/repos/{repo}").get("private") is not False:
         raise ValueError("Discovery accepts public repositories only")
     now = dt.datetime.now(dt.timezone.utc).isoformat()
-    report = {"schema_version": 1, "generated_at": now, "repository": repo,
+    report = {"schema_version": 2, "generated_at": now, "repository": repo,
               "coverage": [], "errors": [], "candidates": []}
     raw_items = []
     for direction in ("asc", "desc"):
@@ -178,20 +238,36 @@ def discover(client, config):
             report["coverage"].append({"source": f"issues-{direction}", "complete": complete, "received": len(batch)})
         except (RuntimeError, KeyError, TypeError, ValueError) as exc:
             report["errors"].append(f"issues-{direction}: {exc}")
-    try:
-        batch, complete = collect_discussions(client, repo, config.get("discussion_pages", 2))
-        raw_items.extend(batch)
-        report["coverage"].append({"source": "discussions-oldest-first", "complete": complete, "received": len(batch)})
-    except (RuntimeError, KeyError, TypeError, ValueError) as exc:
-        report["errors"].append(f"discussions: {exc}")
+    for direction in orders:
+        try:
+            batch, complete = collect_discussions(client, repo, config.get("discussion_pages", 2), direction)
+            raw_items.extend(batch)
+            report["coverage"].append({"source": f"discussions-{direction.lower()}", "complete": complete, "received": len(batch)})
+        except (RuntimeError, KeyError, TypeError, ValueError) as exc:
+            report["errors"].append(f"discussions-{direction.lower()}: {exc}")
+    for number in dict.fromkeys(watch):
+        try:
+            item = normalize_issue(client.get(f"/repos/{repo}/issues/{number}"), repo)
+            if item:
+                raw_items.append(item)
+        except (RuntimeError, KeyError, TypeError, ValueError) as exc:
+            report["errors"].append(f"watched issue {number}: {exc}")
     candidates = rank(raw_items, config["topics"])
     selected = [x for x in candidates if x["state"] == "open" and x["kind"] == "issue"][:config.get("enrich_limit", 15)]
+    selected_ids = {x["id"] for x in selected}
+    selected.extend(x for x in candidates if x["kind"] == "issue" and x["number"] in watch and x["id"] not in selected_ids)
+    search_cache = {}
     for item in selected:
         try:
             enrich(client, item)
         except (RuntimeError, KeyError, TypeError, ValueError) as exc:
             item["checks"]["linked_work"] = "error"
             report["errors"].append(f"{item['id']}: {exc}")
+        try:
+            search_related(client, item, terms, search_cache)
+        except (RuntimeError, KeyError, TypeError, ValueError) as exc:
+            item["checks"]["pr_search"] = "error"
+            report["errors"].append(f"{item['id']} PR search: {exc}")
     # Raw bodies/comments stay in memory, not in reports or agent instructions.
     report["candidates"] = [{k: v for k, v in x.items() if not k.startswith("_")} for x in candidates]
     return report
@@ -206,20 +282,30 @@ def safe_text(value):
 def render(report):
     lines = ["# Discovery report", "", f"Collected: {report['generated_at']}", "",
              "Scores rank topic relevance only. No item is verified or approved for implementation by this scan.",
-             "Linked PRs may be related rather than a complete fix. Current code, releases, reproduction, and additional PR searches still require review.",
+             "Linked PRs and title-search matches may be related rather than a complete fix. Current code, releases, reproduction, and broader searches still require review.",
              "", "## Coverage", ""]
     for source in report["coverage"]:
         state = "exhausted" if source["complete"] else "bounded sample; more results exist"
         lines.append(f"- {source['source']}: {source['received']} records, {state}.")
     if report["errors"]:
         lines.extend(["", "**Incomplete: some requests failed.**"] + [f"- {safe_text(e)}" for e in report["errors"]])
-    lines.extend(["", "## Candidates", "", "| Score | Candidate | Topics | Review status | Linked PRs |",
-                  "| --- | --- | --- | --- | --- |"])
+    lines.extend(["", "## Candidates", "", "| Score | Candidate | Topics | Review status | Linked PRs | Title-search leads |",
+                  "| --- | --- | --- | --- | --- | --- |"])
     for x in report["candidates"]:
         if x["state"] != "open":
             continue
         prs = ", ".join(f"[{p['state']}]({p['url']})" for p in x["related_prs"]) or x["checks"]["linked_work"]
-        lines.append(f"| {x['score']} | [{safe_text(x['title'])}]({x['url']}) | {', '.join(x['topics'])} | {x['triage']} | {prs} |")
+        leads = ", ".join(f"[{safe_text(p['title'][:70])} ({p['state']})]({p['url']})" for p in x["potential_prs"][:5])
+        if len(x["potential_prs"]) > 5:
+            leads += f"; {len(x['potential_prs']) - 5} more in JSON"
+        leads = f"{x['checks']['pr_search']}: {leads}" if leads else x["checks"]["pr_search"]
+        lines.append(f"| {x['score']} | [{safe_text(x['title'])}]({x['url']}) | {', '.join(x['topics'])} | {x['triage']} | {prs} | {leads} |")
+    searched = {s["query"]: s for x in report["candidates"] for s in x["searches"]}
+    if searched:
+        lines.extend(["", "## PR search coverage", "", "Each query is capped at 20 results, ordered by last update. Matches do not prove resolution.", ""])
+        for query, s in searched.items():
+            status = "complete for this query" if s["complete"] else "partial"
+            lines.append(f"- `{safe_text(query)}`: {s['received']} of {s['total_count']} results; {status}.")
     return "\n".join(lines) + "\n"
 
 

@@ -26,14 +26,29 @@ and linked pull-request states. Raw bodies and comments are not saved. Reports
 are written under ignored `reports/`; scheduled reports are Actions artifacts.
 
 The first adapter reads Betaflight's public GitHub issues and discussions.
-It samples oldest and newest issues, and the oldest discussion pages.
+It samples oldest and newest issues and discussions.
 Pagination limits and failed requests are explicit. It does not read Discord,
 private forums, or claim exhaustive coverage of all discussions.
 
-The highest-ranked issues receive comment and timeline checks. A linked open
-or merged PR is flagged for review; it is not assumed to fully solve the issue.
-Discussion comments, unlinked PRs, release inclusion, and code verification
-still need review. Scores measure keyword relevance, not implementation readiness.
+The highest-ranked issues and a curated watch list receive comment/timeline
+checks and bounded PR title searches. An open or merged linked PR is flagged
+for review; title-search matches are kept separately as possible related work.
+Neither is assumed to fully solve the issue. Shared searches are cached within
+each run, and partial results are explicit. Watched issues are refreshed even
+when closed or below the ranking cutoff.
+
+Title relevance outweighs body matches; fenced configuration dumps do not add
+keyword scores. Discussion comments, broader PR searches, release inclusion,
+and code verification still need review. Scores are not implementation approval.
+
+`config.json` controls `watch_issues` (up to 20 public issue numbers),
+`pr_search_terms` (up to 12 plain lowercase topic terms), and
+`discussion_orders` (`ASC`, `DESC`, or both). Each PR query is limited to the
+verified public repository and capped at 20 recently updated results. No issue
+text can change its repository scope. Reports include search coverage and keep
+the full matches in JSON; Markdown shows up to five leads per candidate.
+See [GitHub's search documentation](https://docs.github.com/en/rest/search/search#search-issues-and-pull-requests)
+for search limits and incomplete-result semantics.
 
 ## Project sequence
 

@@ -2,7 +2,10 @@
   "repository": "betaflight/betaflight",
   "issue_pages_per_order": 2,
   "discussion_pages": 2,
+  "discussion_orders": ["ASC", "DESC"],
   "enrich_limit": 15,
+  "watch_issues": [8690, 13491, 8230, 15752, 15855],
+  "pr_search_terms": ["sdio", "blackbox", "msp", "mavlink", "displayport", "telemetry"],
   "topics": {
     "logging": ["blackbox", "logging", "sdcard", "sdio", "flash storage"],
     "interoperability": ["msp", "telemetry", "mavlink", "displayport", "serial"],
