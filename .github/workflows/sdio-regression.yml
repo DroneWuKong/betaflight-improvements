@@ -1,9 +1,9 @@
 name: SDIO rollover regression
 on:
   push:
-    paths: ['experiments/sdio-timeout/**', '.github/workflows/sdio-regression.yml']
+    paths: ['experiments/sdio-timeout/**', 'experiments/sdio-recovery-followup/**', '.github/workflows/sdio-regression.yml']
   pull_request:
-    paths: ['experiments/sdio-timeout/**', '.github/workflows/sdio-regression.yml']
+    paths: ['experiments/sdio-timeout/**', 'experiments/sdio-recovery-followup/**', '.github/workflows/sdio-regression.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,3 +25,26 @@ jobs:
         with:
           python-version: '3.12'
       - run: python experiments/sdio-timeout/verify.py .work/betaflight
+  full-driver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: betaflight/betaflight
+          ref: 88636558693693aca179631e9ed62a24b54f6569
+          path: .work/recovery
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python experiments/sdio-recovery-followup/verify.py .work/recovery
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sdio-full-driver-results
+          path: reports/sdio-recovery/
+          if-no-files-found: error

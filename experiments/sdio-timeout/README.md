@@ -43,6 +43,10 @@ rollover, genuine write expiration, successful reads, and disabled storage.
 
 ## Scope and related work
 
+A [full-driver follow-up](../sdio-recovery-followup/README.md) now tests this
+arithmetic against the existing recovery PR, including its additional DMA-write
+timeout. The original experiment below remains tied to its recorded master revision.
+
 The harness compiles the polling function with boundary stubs, **not the full
 firmware or complete hardware driver**. It does not test DMA cancellation,
 peripheral recovery, physical storage, or real scheduler timing. Genuine
